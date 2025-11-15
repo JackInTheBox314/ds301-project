@@ -19,7 +19,7 @@ REQ_HEADERS = {
 
 all_courses = []
 
-for idx, program in tqdm(programs.iterrows(), total=len(programs)):
+for idx, program in tqdm(programs[:2].iterrows(), total=len(programs)):
     if str(program.get("visited", "False")) == "True":
         continue
 
@@ -40,13 +40,24 @@ for idx, program in tqdm(programs.iterrows(), total=len(programs)):
     tbody = courselist.find("tbody")
     rows = tbody.find_all("tr")
 
-    # skip first row if it’s “Minor Requirements”
-    rows = rows[1:]
-
+    req_num = 0
+    suppress_course_increments = False  # after we hit "Select one...", stop incrementing for course rows
     for tr in rows:
+        row_text = tr.get_text(" ", strip=True)
+
+        # --- Handle "Select one of the following" rows ---
+        if "Select one of the following" in row_text:
+            # Every time this appears, count it as a new requirement
+            req_num += 1
+            suppress_course_increments = True  # from now on, don't increment for course rows
+            continue  # usually these rows don't have course links
+        
         a = tr.find("a", class_="bubblelink code")
         if not a:
-            continue  # skip rows without course links (e.g., comments, total credits)
+            continue  # skip non-course rows
+
+        if "orclass" not in (tr.get("class") or []) and not suppress_course_increments:
+            req_num += 1
 
         course_code_table = a.get_text(strip=True)
         course_href = a.get("href")
@@ -110,8 +121,9 @@ for idx, program in tqdm(programs.iterrows(), total=len(programs)):
                 
                 # 2: description
                 if len(child_divs) >= 3:
-                    description = child_divs[2].get_text(" ", strip=True).replace("\n", "")
-
+                    description_div = child_divs[2]
+                    description = description_div.get_text(" ", strip=True).replace("\n", "")
+                
                 # 3: Grading
                 if len(child_divs) >= 4:
                     grading_div = child_divs[3]
@@ -154,6 +166,7 @@ for idx, program in tqdm(programs.iterrows(), total=len(programs)):
 
         all_courses.append({
             "program_name": program["name"],
+            "req_num": req_num,
             "course_code_table": course_code_table,
             "title_table": title_table,
             "credits_table": credits_table,
@@ -179,3 +192,4 @@ df = pd.DataFrame(all_courses)
 
 df.to_csv("courses_detailed.csv", index=False)
 programs.to_csv("program_urls.csv", index=False)
+print("Courses_detailed.csv printed")
