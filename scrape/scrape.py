@@ -19,7 +19,7 @@ REQ_HEADERS = {
 
 all_courses = []
 
-for idx, program in tqdm(programs[:2].iterrows(), total=len(programs)):
+for idx, program in tqdm(programs.iterrows(), total=len(programs)):
     if str(program.get("visited", "False")) == "True":
         continue
 
@@ -41,22 +41,73 @@ for idx, program in tqdm(programs[:2].iterrows(), total=len(programs)):
     rows = tbody.find_all("tr")
 
     req_num = 0
-    suppress_course_increments = False  # after we hit "Select one...", stop incrementing for course rows
     for tr in rows:
         row_text = tr.get_text(" ", strip=True)
+        tr_classes = tr.get("class") or []
+
+        # --- Skip area headers and subheaders (organizational only) ---
+        if "areaheader" in tr_classes or "areasubheader" in tr_classes:
+            continue
+
+        # --- Handle comment rows that indicate requirements ---
+        comment_span = tr.find("span", class_="courselistcomment")
+        if comment_span:
+            comment_classes = comment_span.get("class") or []
+            if "areaheader" not in comment_classes and "areasubheader" not in comment_classes:
+                comment_text = comment_span.get_text(" ", strip=True)
+                # Skip if it's just a totals row or empty
+                if "Total Credits" in comment_text or "listsum" in tr_classes:
+                    continue
+                # If it's a requirement comment (not "Select one of the following"), increment req_num
+                if comment_text and "Select one of the following" not in comment_text:
+                    # Check if this row has a course link - if not, it's a standalone requirement
+                    a = tr.find("a", class_="bubblelink code")
+                    if not a:
+                        req_num += 1
+                        
+                        # Extract credits from the row if available
+                        tds = tr.find_all("td")
+                        credits_table = ""
+                        last_td = tds[-1] if tds else None
+                        if last_td is not None and "hourscol" in (last_td.get("class") or []):
+                            credits_table = last_td.get_text(strip=True)
+                        
+                        # Save the comment row as a requirement entry
+                        all_courses.append({
+                            "program_name": program["name"],
+                            "req_num": req_num,
+                            "course_code": "",  # No course code for comment rows
+                            "title": comment_text,
+                            "credits": credits_table,
+                            "offered": "",
+                            "description": "",
+                            "grading": "",
+                            "repeatable": "",
+                            "prerequisites": "",
+                            "extra_blocks": "",
+                            "detail_url": "",
+                        })
+                        continue
 
         # --- Handle "Select one of the following" rows ---
         if "Select one of the following" in row_text:
             # Every time this appears, count it as a new requirement
             req_num += 1
-            suppress_course_increments = True  # from now on, don't increment for course rows
             continue  # usually these rows don't have course links
         
         a = tr.find("a", class_="bubblelink code")
         if not a:
             continue  # skip non-course rows
 
-        if "orclass" not in (tr.get("class") or []) and not suppress_course_increments:
+        # --- Check if course is indented (part of "Select one" group) ---
+        is_indented = False
+        blockindent = a.find_parent("div", class_="blockindent")
+        if blockindent:
+            is_indented = True
+
+        # --- Increment req_num for new requirements ---
+        # Don't increment if: it's an "orclass" row or it's indented (part of "Select one" group)
+        if "orclass" not in tr_classes and not is_indented:
             req_num += 1
 
         course_code_table = a.get_text(strip=True)
@@ -167,13 +218,10 @@ for idx, program in tqdm(programs[:2].iterrows(), total=len(programs)):
         all_courses.append({
             "program_name": program["name"],
             "req_num": req_num,
-            "course_code_table": course_code_table,
-            "title_table": title_table,
-            "credits_table": credits_table,
 
-            "course_code": course_code,
-            "title": title,
-            "credits": credits,
+            "course_code": course_code_table,
+            "title": title_table,
+            "credits": credits_table,
             "offered": offered,
             "description": description,
             "grading": grading,
